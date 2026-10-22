@@ -1,0 +1,144 @@
+const pool = require("./config/db");
+const express = require("express");
+const cors = require("cors");
+const app = express();
+//crome-file sharing route
+const attachmentRoutes = require("./routes/attachmentRoutes");
+
+const { Server } = require("socket.io");
+const http = require("http");
+const server = http.createServer(app);
+
+const onlineUsers = {};
+
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+    },
+});
+io.on("connection", (socket) => {
+
+    console.log("User connected:", socket.id);
+
+socket.on("register_user", (userId) => {
+
+    onlineUsers[userId] = socket.id;
+     console.log(`User ${userId} registered with socket ${socket.id}` );    
+});
+// Handle incoming messages and sends to receiver if they are online   
+socket.on("send_message", (data) => {
+     console.log("Message received:");
+        console.log(data);
+
+    const receiverSocket =
+        onlineUsers[data.receiver_id];
+
+    if (receiverSocket) {
+
+        io.to(receiverSocket).emit(
+            "receive_message",
+            data,
+        );
+
+    }else {
+            console.log(
+                `User ${data.receiver_id} is not online`
+            );
+        }
+
+});
+
+// Forward delivery acknowledgements to the original sender.
+socket.on("message_delivered", (data) => {
+    const senderSocket = onlineUsers[data.sender_id];
+
+    if (senderSocket) {
+        io.to(senderSocket).emit("message_delivered", {
+            client_message_id: data.client_message_id,
+            receiver_id: data.receiver_id,
+        });
+    }
+});
+
+socket.on("disconnect", () => {
+        console.log("User disconnected:", socket.id);
+    for (const userId in onlineUsers) {
+        if (onlineUsers[userId] === socket.id) {
+            delete onlineUsers[userId];
+
+            console.log(
+                `User ${userId} removed from online users`
+            );
+
+            break;
+        }
+    }
+});
+    });
+
+
+io.on("disconnect", (socket) => {
+    console.log("User disconnected:", socket.id);
+});
+
+app.use(cors());
+app.use(express.json());
+app.use("/attachments", attachmentRoutes);
+
+const authRoutes = require("./routes/authRoutes");
+app.use(authRoutes);
+
+const chatRoutes = require("./routes/chatRoutes");
+app.use(chatRoutes);
+
+const userRoutes = require("./routes/userRoutes");
+app.use(userRoutes);
+
+const PORT = 3000;
+
+app.get("/", (req, res) => {
+    res.send("Hybrid Chat Backend is running!");
+});
+
+//LAN
+app.get('/lan-test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'LAN connection successful!'
+  });
+});
+
+
+app.post('/lan-message', (req, res) => {
+  const { message } = req.body;
+
+  if (typeof message !== 'string' || !message.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: 'A message is required',
+    });
+  }
+
+  console.log('LAN message received:', message);
+
+  res.json({
+    success: true,
+    receivedMessage: message,
+    reply: 'Message received by the LAN server!',
+  });
+});
+
+//LAN-end
+
+pool.query("SELECT NOW()", (err, result) => {
+    if (err) {
+        console.error("Database connection failed:", err.message);
+    } else {
+        console.log("Database connected!");
+        console.log(result.rows[0]);
+    }
+});
+
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
